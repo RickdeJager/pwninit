@@ -4,6 +4,7 @@ use crate::elf;
 use crate::is_bin;
 use crate::is_ld;
 use crate::is_libc;
+use crate::is_dockerfile;
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -51,6 +52,11 @@ pub struct Opts {
     #[setters(generate)]
     pub ld: Option<PathBuf>,
 
+    /// Name of the Dockerfile to pull libc and ld from
+    #[structopt(long)]
+    #[setters(generate)]
+    pub dockerfile: Option<PathBuf>,
+
     /// Path to custom pwntools solve script template. Check the README for more
     /// information.
     #[structopt(long)]
@@ -96,6 +102,7 @@ impl Opts {
         f(&self.bin, "bin", Color::BrightBlue);
         f(&self.libc, "libc", Color::Yellow);
         f(&self.ld, "ld", Color::Green);
+        f(&self.dockerfile, "Dockerfile", Color::BrightMagenta);
     }
 
     /// For the unspecified files, try to guess their path
@@ -123,6 +130,7 @@ impl Opts {
             .clone()
             .with_bin(self.bin.or(f(is_bin)?))
             .with_libc(self.libc.or(f(is_libc)?))
-            .with_ld(self.ld.or(f(is_ld)?)))
+            .with_ld(self.ld.or(f(is_ld)?))
+            .with_dockerfile(self.dockerfile.or(f(is_dockerfile)?)))
     }
 }

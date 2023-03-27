@@ -11,6 +11,7 @@ mod pwninit;
 mod set_exec;
 mod solvepy;
 mod unstrip_libc;
+mod dockerfile;
 mod warn;
 
 pub use crate::pwninit::run;
@@ -22,6 +23,7 @@ use crate::libc_version::LibcVersion;
 use crate::opts::Opts;
 pub use crate::set_exec::set_exec;
 pub use crate::unstrip_libc::unstrip_libc;
+use crate::dockerfile::{scan_dockerfile, download_libc_ld_for_docker_tag};
 use crate::warn::Warn;
 use crate::warn::WarnResult;
 
@@ -55,6 +57,11 @@ pub fn is_ld(path: &Path) -> elf::detect::Result<bool> {
     Ok(is_elf(path)? && path_contains(path, b"ld-"))
 }
 
+/// Detect if `path` is a dockerfile
+pub fn is_dockerfile(path: &Path) -> elf::detect::Result<bool> {
+    Ok(path_contains(path, b"Dockerfile") || path_contains(path, b"dockerfile"))
+}
+
 /// Same as `fetch_ld()`, but doesn't do anything if an existing linker is
 /// detected
 fn maybe_fetch_ld(opts: &Opts, ver: &LibcVersion) -> fetch_ld::Result {
@@ -84,6 +91,19 @@ pub fn maybe_visit_libc(opts: &Opts) {
     if let Some(libc) = &opts.libc {
         visit_libc(opts, libc)
     }
+}
+
+pub fn visit_dockerfile(dockerfile: &Path) -> bool {
+    // Scan the dockerfile for a container tag
+    let tag = match scan_dockerfile(dockerfile) {
+        Ok(tag) => tag,
+        Err(err) => {
+            err.warn("failed to scan dockerfile");
+            return false;
+        }
+    };
+
+    download_libc_ld_for_docker_tag(&tag).is_ok()
 }
 
 /// Set the binary executable

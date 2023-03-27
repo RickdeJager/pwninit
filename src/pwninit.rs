@@ -1,4 +1,5 @@
 use crate::maybe_visit_libc;
+use crate::visit_dockerfile;
 use crate::opts;
 use crate::patch_bin;
 use crate::set_bin_exec;
@@ -17,7 +18,7 @@ pub enum Error {
     #[snafu(display("failed setting binary executable: {}", source))]
     SetBinExec { source: io::Error },
 
-    #[snafu(display("failed locating provided files (binary, libc, linker): {}", source))]
+    #[snafu(display("failed locating provided files (binary, libc, linker, Dockerfile): {}", source))]
     Find { source: opts::Error },
 
     #[snafu(display("failed setting linker executable: {}", source))]
@@ -42,6 +43,14 @@ pub fn run(opts: Opts) -> Result {
     println!();
 
     set_bin_exec(&opts).context(SetBinExecSnafu)?;
+    // We might have to pull a libc and ld from a Dockerfile
+    if (opts.libc.is_none() || opts.ld.is_none()) && opts.dockerfile.is_some() {
+        visit_dockerfile(opts.dockerfile.as_ref().unwrap());
+    }
+
+    // Redo detection in case libc or ld was pulled from Dockerfile
+    let opts = opts.find_if_unspec().context(FindSnafu)?;
+
     maybe_visit_libc(&opts);
 
     // Redo detection in case the ld was downloaded
