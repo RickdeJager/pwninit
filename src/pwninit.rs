@@ -1,3 +1,5 @@
+use crate::dockerfile::download_libc_ld_for_docker_tag;
+use crate::dockerfile;
 use crate::maybe_visit_libc;
 use crate::visit_dockerfile;
 use crate::opts;
@@ -29,6 +31,9 @@ pub enum Error {
 
     #[snafu(display("failed making template solve script: {}", source))]
     Solvepy { source: solvepy::Error },
+
+    #[snafu(display("Failed to extract files from docker image: {}", source))]
+    Dockerfile { source: dockerfile::Error },
 }
 
 pub type Result = std::result::Result<(), Error>;
@@ -43,9 +48,14 @@ pub fn run(opts: Opts) -> Result {
     println!();
 
     set_bin_exec(&opts).context(SetBinExecSnafu)?;
-    // We might have to pull a libc and ld from a Dockerfile
-    if (opts.libc.is_none() || opts.ld.is_none()) && opts.dockerfile.is_some() {
-        visit_dockerfile(opts.dockerfile.as_ref().unwrap());
+    // We might have to pull a libc and ld from a Docker image
+    if opts.libc.is_none() || opts.ld.is_none() {
+        // Docker tags get priority, since those have to be explicitly set.
+        if let Some(docker_tag) = opts.docker_tag.as_ref() {
+            download_libc_ld_for_docker_tag(&docker_tag).context(DockerfileSnafu)?;
+        } else if let Some(dockerfile) = opts.dockerfile.as_ref() {
+            visit_dockerfile(dockerfile).context(DockerfileSnafu)?;
+        }
     }
 
     // Redo detection in case libc or ld was pulled from Dockerfile

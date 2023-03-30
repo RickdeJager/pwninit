@@ -1,24 +1,39 @@
+/// Helper functions to pull ld and libc files from a docker container.
 use colored::Colorize;
 use regex::Regex;
+
+use snafu::Snafu;
 
 use std::path::Path;
 use std::process::Command;
 use std::collections::HashMap;
 
-/// Helper functions to pull ld and libc files from a docker container.
 
-pub fn scan_dockerfile(dockerfile: &Path) -> Result<String, String> {
+#[derive(Debug, Snafu)]
+#[allow(clippy::enum_variant_names)]
+
+pub enum Error {
+    #[snafu(display("Docker run error: {}", message))]
+    Run { message: String },
+
+    #[snafu(display("Failed to parse dockerfile: {}", message))]
+    Parse { message: String },
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+pub fn scan_dockerfile(dockerfile: &Path) -> Result<String> {
     // Read the dockerfile from the given path
     let dockerfile_contents = std::fs::read_to_string(dockerfile).expect("failed to read dockerfile");
     
     let docker_tag = dockerfile_contents
         .lines()
         .rev() // We want to find the last FROM statement
-        .find(|line| line.starts_with("FROM"))
-        .expect("failed to find FROM in dockerfile")
+        .find(|line| line.to_uppercase().starts_with("FROM"))
+        .ok_or(Error::Parse { message: "failed to find FROM statement in dockerfile".to_string() })?
         .split_whitespace()
         .nth(1)
-        .expect("failed to find tag in FROM");
+        .ok_or(Error::Parse { message: "failed to find tag in FROM".to_string() })?;
     Ok(docker_tag.to_string())
 }
 
@@ -40,7 +55,23 @@ fn parse_ldconfig(content: &str) -> HashMap<&str, &str> {
     paths
 }
 
-fn docker_get_paths(tag: &str, wanted: Vec<&str>) -> Vec<String> {
+fn check_docker_stderr(proc: &std::process::Output) -> Result<()> {
+    // If the exit code is zero, we can return Ok(())
+    if proc.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8(proc.stderr.clone()).unwrap();
+    if !stderr.is_empty() {
+        // Return a run snafu here
+        return Err(Error::Run {
+            message: stderr,
+        });
+    }
+    Ok(())
+}
+
+fn docker_get_paths(tag: &str, wanted: Vec<&str>) -> Result<Vec<String>> {
     let proc = Command::new("docker")
         .arg("run")
         .arg("--rm")
@@ -49,18 +80,20 @@ fn docker_get_paths(tag: &str, wanted: Vec<&str>) -> Vec<String> {
         .arg("-p")
         .output()
         .expect("failed to execute docker create");
+
+    check_docker_stderr(&proc)?;
     let output = String::from_utf8(proc.stdout).expect("failed to parse docker output");
     let paths = parse_ldconfig(&output);
 
-    wanted
+    Ok(wanted
         .iter()
         .map(|lib| paths.get(lib))
         .filter_map(|p| p.map(|p| p.to_string()))
-        .collect()
+        .collect())
 }
 
-fn docker_copy_file(container_id: &str, path: &str, silent: bool) {
-    let copy_proc_libc = Command::new("docker")
+fn docker_copy_file(container_id: &str, path: &str) -> Result<()> {
+    let copy_proc = Command::new("docker")
         .arg("cp")
         .arg("-L")
         .arg(format!("{}:{}", container_id, path))
@@ -68,21 +101,7 @@ fn docker_copy_file(container_id: &str, path: &str, silent: bool) {
         .output()
         .expect("failed to execute docker cp");
 
-    // Check if the copy was successful by reading the stderr
-    let stderr = String::from_utf8(copy_proc_libc.stderr).unwrap();
-    if !stderr.is_empty() {
-        if !silent {
-            println!(
-                "{}",
-                format!(
-                    "Failed to extract {} from the docker container.\nError: {}",
-                    path.bold(),
-                    stderr,
-                ).red()
-            );
-        }
-        return;
-    }
+    check_docker_stderr(&copy_proc)?;
 
     println!(
         "{}",
@@ -91,9 +110,32 @@ fn docker_copy_file(container_id: &str, path: &str, silent: bool) {
             path.bold(),
         ).green()
     );
+
+    Ok(())
 }
 
-pub fn download_libc_ld_for_docker_tag(tag: &str) -> Result<(), String> {
+fn extract_docker_libc_ld(tag: &str, container_id: &str) -> Result<()> {
+    let paths = docker_get_paths(&tag, vec!["libc.so.6", "ld-linux-x86-64.so.2"])?;
+
+    // Copy the files we _know_ to be in the container.
+    for path in &paths {
+        docker_copy_file(&container_id, path)?
+    }
+
+    // Add some more paths manually, since we can't get alpine paths from ldconfig for example.
+    let additional_paths = vec![
+        "/lib/ld-musl-x86_64.so.1",
+        "/lib/libc.musl-x86_64.so.1",
+    ];
+
+    additional_paths.iter().for_each(|path| {
+        let _ = docker_copy_file(&container_id, path);
+    });
+
+    Ok(())
+}
+
+pub fn download_libc_ld_for_docker_tag(tag: &str) -> Result<()> {
     // TODO; I'm just assuming we can run docker as user,
     // i.e. we are in the docker group
 
@@ -113,35 +155,19 @@ pub fn download_libc_ld_for_docker_tag(tag: &str) -> Result<(), String> {
         .output()
         .expect("failed to execute docker create");
 
-    if !container_proc.status.success() {
-        // TODO: print error here
-        return Err("failed to execute docker create".to_string());
-    }
+    check_docker_stderr(&container_proc)?;
 
     let container_id = String::from_utf8(container_proc.stdout).unwrap().trim().to_string();
-    let paths = docker_get_paths(&tag, vec!["libc.so.6", "ld-linux-x86-64.so.2"]);
+    let res = extract_docker_libc_ld(&tag, &container_id);
 
-    // Copy the files we _know_ to be in the container.
-    paths.iter().for_each(|path| {
-        docker_copy_file(&container_id, path, false);
-    });
-
-    // Add some more paths manually, since we can't get alpine paths from ldconfig for example.
-    let additional_paths = vec![
-        "/lib/ld-musl-x86_64.so.1",
-        "/lib/libc.musl-x86_64.so.1",
-    ];
-
-    additional_paths.iter().for_each(|path| {
-        docker_copy_file(&container_id, path, true);
-    });
-
-    // Clean up the container we just created
+    // Clean up the container we just created, even though some of the previous operations may have
+    // failed.
     let _rm_proc = Command::new("docker")
         .arg("rm")
         .arg(container_id)
         .output()
         .expect("failed to execute docker rm");
 
-    Ok(())
+    // Return the result of the extract operation
+    res
 }

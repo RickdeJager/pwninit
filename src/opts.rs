@@ -52,7 +52,7 @@ pub struct Opts {
     #[setters(generate)]
     pub ld: Option<PathBuf>,
 
-    /// Name of the Dockerfile to pull libc and ld from
+    /// Path to a Dockerfile to pull libc and ld from
     #[structopt(long)]
     #[setters(generate)]
     pub dockerfile: Option<PathBuf>,
@@ -76,6 +76,10 @@ pub struct Opts {
     #[structopt(long)]
     #[structopt(default_value = "ld")]
     pub template_ld_name: String,
+
+    /// Docker tag to pull libc and ld from
+    #[structopt(long)]
+    pub docker_tag: Option<String>,
 
     /// Disable running patchelf on binary
     #[structopt(long)]
