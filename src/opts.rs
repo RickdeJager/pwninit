@@ -2,9 +2,9 @@
 
 use crate::elf;
 use crate::is_bin;
+use crate::is_dockerfile;
 use crate::is_ld;
 use crate::is_libc;
-use crate::is_dockerfile;
 
 use std::path::Path;
 use std::path::PathBuf;

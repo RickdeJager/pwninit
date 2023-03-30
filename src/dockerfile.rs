@@ -4,10 +4,9 @@ use regex::Regex;
 
 use snafu::Snafu;
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
-use std::collections::HashMap;
-
 
 #[derive(Debug, Snafu)]
 #[allow(clippy::enum_variant_names)]
@@ -24,16 +23,21 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 pub fn scan_dockerfile(dockerfile: &Path) -> Result<String> {
     // Read the dockerfile from the given path
-    let dockerfile_contents = std::fs::read_to_string(dockerfile).expect("failed to read dockerfile");
-    
+    let dockerfile_contents =
+        std::fs::read_to_string(dockerfile).expect("failed to read dockerfile");
+
     let docker_tag = dockerfile_contents
         .lines()
         .rev() // We want to find the last FROM statement
         .find(|line| line.to_uppercase().starts_with("FROM"))
-        .ok_or(Error::Parse { message: "failed to find FROM statement in dockerfile".to_string() })?
+        .ok_or(Error::Parse {
+            message: "failed to find FROM statement in dockerfile".to_string(),
+        })?
         .split_whitespace()
         .nth(1)
-        .ok_or(Error::Parse { message: "failed to find tag in FROM".to_string() })?;
+        .ok_or(Error::Parse {
+            message: "failed to find tag in FROM".to_string(),
+        })?;
     Ok(docker_tag.to_string())
 }
 
@@ -64,9 +68,7 @@ fn check_docker_stderr(proc: &std::process::Output) -> Result<()> {
     let stderr = String::from_utf8(proc.stderr.clone()).unwrap();
     if !stderr.is_empty() {
         // Return a run snafu here
-        return Err(Error::Run {
-            message: stderr,
-        });
+        return Err(Error::Run { message: stderr });
     }
     Ok(())
 }
@@ -105,10 +107,7 @@ fn docker_copy_file(container_id: &str, path: &str) -> Result<()> {
 
     println!(
         "{}",
-        format!(
-            "Extracted {} from the docker container.",
-            path.bold(),
-        ).green()
+        format!("Extracted {} from the docker container.", path.bold(),).green()
     );
 
     Ok(())
@@ -123,10 +122,7 @@ fn extract_docker_libc_ld(tag: &str, container_id: &str) -> Result<()> {
     }
 
     // Add some more paths manually, since we can't get alpine paths from ldconfig for example.
-    let additional_paths = vec![
-        "/lib/ld-musl-x86_64.so.1",
-        "/lib/libc.musl-x86_64.so.1",
-    ];
+    let additional_paths = vec!["/lib/ld-musl-x86_64.so.1", "/lib/libc.musl-x86_64.so.1"];
 
     additional_paths.iter().for_each(|path| {
         let _ = docker_copy_file(&container_id, path);
@@ -144,9 +140,10 @@ pub fn download_libc_ld_for_docker_tag(tag: &str) -> Result<()> {
         format!(
             "Creating a container for tag: {}\nThis may take a while...",
             tag.bold()
-        ).green()
+        )
+        .green()
     );
-    
+
     // We can only copy files from containers, so let's spin up a temp container for the given
     // image tag. This command will return the container id.
     let container_proc = Command::new("docker")
@@ -157,7 +154,10 @@ pub fn download_libc_ld_for_docker_tag(tag: &str) -> Result<()> {
 
     check_docker_stderr(&container_proc)?;
 
-    let container_id = String::from_utf8(container_proc.stdout).unwrap().trim().to_string();
+    let container_id = String::from_utf8(container_proc.stdout)
+        .unwrap()
+        .trim()
+        .to_string();
     let res = extract_docker_libc_ld(&tag, &container_id);
 
     // Clean up the container we just created, even though some of the previous operations may have

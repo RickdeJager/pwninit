@@ -1,6 +1,7 @@
 //! Utility functions that provide the bulk of `pwninit` functionality
 
 mod cpu_arch;
+mod dockerfile;
 mod elf;
 mod fetch_ld;
 mod libc_deb;
@@ -11,19 +12,18 @@ mod pwninit;
 mod set_exec;
 mod solvepy;
 mod unstrip_libc;
-mod dockerfile;
 mod warn;
 
 pub use crate::pwninit::run;
 pub use crate::pwninit::Result;
 
+use crate::dockerfile::{download_libc_ld_for_docker_tag, scan_dockerfile};
 use crate::elf::detect::is_elf;
 pub use crate::fetch_ld::fetch_ld;
 use crate::libc_version::LibcVersion;
 use crate::opts::Opts;
 pub use crate::set_exec::set_exec;
 pub use crate::unstrip_libc::unstrip_libc;
-use crate::dockerfile::{scan_dockerfile, download_libc_ld_for_docker_tag};
 use crate::warn::Warn;
 use crate::warn::WarnResult;
 
