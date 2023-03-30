@@ -1,12 +1,12 @@
-use crate::dockerfile::download_libc_ld_for_docker_tag;
 use crate::dockerfile;
+use crate::dockerfile::download_libc_ld_for_docker_tag;
 use crate::maybe_visit_libc;
-use crate::visit_dockerfile;
 use crate::opts;
 use crate::patch_bin;
 use crate::set_bin_exec;
 use crate::set_ld_exec;
 use crate::solvepy;
+use crate::visit_dockerfile;
 use crate::Opts;
 
 use ex::io;
@@ -20,7 +20,10 @@ pub enum Error {
     #[snafu(display("failed setting binary executable: {}", source))]
     SetBinExec { source: io::Error },
 
-    #[snafu(display("failed locating provided files (binary, libc, linker, Dockerfile): {}", source))]
+    #[snafu(display(
+        "failed locating provided files (binary, libc, linker, Dockerfile): {}",
+        source
+    ))]
     Find { source: opts::Error },
 
     #[snafu(display("failed setting linker executable: {}", source))]
