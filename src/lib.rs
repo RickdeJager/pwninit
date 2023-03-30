@@ -93,17 +93,11 @@ pub fn maybe_visit_libc(opts: &Opts) {
     }
 }
 
-pub fn visit_dockerfile(dockerfile: &Path) -> bool {
+/// Read a dockfile and download the libc and ld for the base image
+pub fn visit_dockerfile(dockerfile: &Path) -> dockerfile::Result<()> {
     // Scan the dockerfile for a container tag
-    let tag = match scan_dockerfile(dockerfile) {
-        Ok(tag) => tag,
-        Err(err) => {
-            err.warn("failed to scan dockerfile");
-            return false;
-        }
-    };
-
-    download_libc_ld_for_docker_tag(&tag).is_ok()
+    let tag = scan_dockerfile(dockerfile)?;
+    download_libc_ld_for_docker_tag(&tag)
 }
 
 /// Set the binary executable
