@@ -118,7 +118,7 @@ fn extract_docker_libc_ld(tag: &str, container_id: &str) -> Result<()> {
 
     // Copy the files we _know_ to be in the container.
     for path in &paths {
-        docker_copy_file(&container_id, path)?
+        docker_copy_file(&container_id, path)?;
     }
 
     // Add some more paths manually, since we can't get alpine paths from ldconfig for example.
