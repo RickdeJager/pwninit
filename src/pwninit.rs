@@ -1,12 +1,11 @@
 use crate::dockerfile;
-use crate::dockerfile::download_libc_ld_for_docker_tag;
+use crate::dockerfile::{handle_docker_tag, scan_dockerfile};
 use crate::maybe_visit_libc;
 use crate::opts;
 use crate::patch_bin;
 use crate::set_bin_exec;
 use crate::set_ld_exec;
 use crate::solvepy;
-use crate::visit_dockerfile;
 use crate::Opts;
 
 use ex::io;
@@ -54,10 +53,14 @@ pub fn run(opts: Opts) -> Result {
     // We might have to pull a libc and ld from a Docker image
     if opts.libc.is_none() || opts.ld.is_none() {
         // Docker tags get priority, since those have to be explicitly set.
-        if let Some(docker_tag) = opts.docker_tag.as_ref() {
-            download_libc_ld_for_docker_tag(&docker_tag).context(DockerfileSnafu)?;
-        } else if let Some(dockerfile) = opts.dockerfile.as_ref() {
-            visit_dockerfile(dockerfile).context(DockerfileSnafu)?;
+        let maybe_docker_tag = opts.docker_tag.clone().or_else(|| {
+            opts.dockerfile
+                .as_ref()
+                .and_then(|dockerfile| scan_dockerfile(dockerfile).ok())
+        });
+
+        if let Some(docker_tag) = maybe_docker_tag {
+            handle_docker_tag(&docker_tag, &opts.bin.clone().unwrap()).context(DockerfileSnafu)?;
         }
     }
 

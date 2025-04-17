@@ -17,7 +17,7 @@ mod warn;
 pub use crate::pwninit::run;
 pub use crate::pwninit::Result;
 
-use crate::dockerfile::{download_libc_ld_for_docker_tag, scan_dockerfile};
+use crate::dockerfile::scan_dockerfile;
 use crate::elf::detect::is_elf;
 pub use crate::fetch_ld::fetch_ld;
 use crate::libc_version::LibcVersion;
@@ -91,13 +91,6 @@ pub fn maybe_visit_libc(opts: &Opts) {
     if let Some(libc) = &opts.libc {
         visit_libc(opts, libc)
     }
-}
-
-/// Read a dockfile and download the libc and ld for the base image
-pub fn visit_dockerfile(dockerfile: &Path) -> dockerfile::Result<()> {
-    // Scan the dockerfile for a container tag
-    let tag = scan_dockerfile(dockerfile)?;
-    download_libc_ld_for_docker_tag(&tag)
 }
 
 /// Set the binary executable

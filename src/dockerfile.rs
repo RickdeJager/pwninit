@@ -5,7 +5,7 @@ use regex::Regex;
 use snafu::Snafu;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Debug, Snafu)]
@@ -46,6 +46,7 @@ pub fn scan_dockerfile(dockerfile: &Path) -> Result<String> {
 //
 //       In a docker base image, this may not be an issue. This assumption is fine for images like
 //       ubuntu and archlinux.
+// TODO: refactor this out? We don't need this if we're doing LDD
 fn parse_ldconfig(content: &str) -> HashMap<&str, &str> {
     let r = Regex::new(r"\s+(?P<name>[\w.\-]+)\s\(.+\) => (?P<path>[\w/.\-]+)$").unwrap();
     let mut paths = HashMap::new();
@@ -58,6 +59,34 @@ fn parse_ldconfig(content: &str) -> HashMap<&str, &str> {
     }
     paths
 }
+
+fn parse_ldd(content: &str) -> HashMap<&str, &str> {
+    //      ....
+    // 	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007c49327d4000)
+	//  /lib64/ld-linux-x86-64.so.2 (0x00007c4932d3f000)
+    //      ....
+    // The loader is one of the few non-named libraries, like VDSO.
+
+    let r = Regex::new(r"\s+(?P<name>[\w.\-+_]+)\s+=>\s+(?P<path>[\w/.\-+_]+) ").unwrap();
+    let loader_regex = Regex::new(r"^\s+(?P<path>[\w/.\-]+) \(").unwrap();
+    let mut paths = HashMap::new();
+    for line in content.lines() {
+        if let Some(caps) = r.captures(line) {
+            let lib = caps.name("name").unwrap().as_str();
+            let path = caps.name("path").unwrap().as_str();
+            paths.insert(lib, path);
+        }
+
+        if line.contains("ld-linux") {
+            if let Some(caps) = loader_regex.captures(line) {
+                let path = caps.name("path").unwrap().as_str();
+                paths.insert("ld-linux", path);
+            }
+        }
+    }
+    paths
+}
+
 
 fn check_docker_stderr(proc: &std::process::Output) -> Result<()> {
     // If the exit code is zero, we can return Ok(())
@@ -73,6 +102,7 @@ fn check_docker_stderr(proc: &std::process::Output) -> Result<()> {
     Ok(())
 }
 
+// TODO: refactor this out? We don't need this if we're doing LDD
 fn docker_get_paths(tag: &str, wanted: Vec<&str>) -> Result<Vec<String>> {
     let proc = Command::new("docker")
         .arg("run")
@@ -113,28 +143,41 @@ fn docker_copy_file(container_id: &str, path: &str) -> Result<()> {
     Ok(())
 }
 
-fn extract_docker_libc_ld(tag: &str, container_id: &str) -> Result<()> {
-    let paths = docker_get_paths(&tag, vec!["libc.so.6", "ld-linux-x86-64.so.2"])?;
+fn extract_ldd_paths(tag: &str, bin: &Path) -> Result<Vec<String>> {
+    let proc = Command::new("docker")
+        .arg("run")
+        .arg("-v")
+        .arg(format!("{}:/the_binary", bin.to_str().unwrap()))
+        .arg("--rm")
+        .arg(tag)
+        .arg("ldd")
+        .arg("/the_binary")
+        .output()
+        .expect("failed to execute docker create");
 
-    // Copy the files we _know_ to be in the container.
-    for path in &paths {
-        docker_copy_file(&container_id, path)?;
-    }
+    check_docker_stderr(&proc)?;
 
-    // Add some more paths manually, since we can't get alpine paths from ldconfig for example.
-    let additional_paths = vec!["/lib/ld-musl-x86_64.so.1", "/lib/libc.musl-x86_64.so.1"];
+    let output = String::from_utf8(proc.stdout).expect("failed to parse docker output");
+    let paths = parse_ldd(&output);
 
-    additional_paths.iter().for_each(|path| {
-        let _ = docker_copy_file(&container_id, path);
-    });
+    println!(
+        "{}",
+        format!(
+            "Extracting {} libraries from the docker container.",
+            paths.len()
+        )
+        .green()
+    );
 
-    Ok(())
+    Ok(paths
+        .iter()
+        .map(|lib| lib.1.to_string())
+        .collect())
 }
 
-pub fn download_libc_ld_for_docker_tag(tag: &str) -> Result<()> {
+pub fn handle_docker_tag(tag: &str, bin: &PathBuf) -> Result<()> {
     // TODO; I'm just assuming we can run docker as user,
     // i.e. we are in the docker group
-
     println!(
         "{}",
         format!(
@@ -158,16 +201,30 @@ pub fn download_libc_ld_for_docker_tag(tag: &str) -> Result<()> {
         .unwrap()
         .trim()
         .to_string();
-    let res = extract_docker_libc_ld(&tag, &container_id);
 
-    // Clean up the container we just created, even though some of the previous operations may have
-    // failed.
-    let _rm_proc = Command::new("docker")
+    // We're gonna start a docker container, and map the binary into the container so we can
+    // ldd it. This should also give us the libs that are not installed yet.
+    let paths = extract_ldd_paths(&tag, bin)?;
+
+    // Copy the files we _know_ to be in the container.
+    for path in &paths {
+        docker_copy_file(&container_id, path)?;
+    }
+
+    // Add some more paths manually, since we can't get alpine paths from ldconfig for example.
+    let additional_paths = vec!["/lib/ld-musl-x86_64.so.1", "/lib/libc.musl-x86_64.so.1"];
+
+    additional_paths.iter().for_each(|path| {
+        let _ = docker_copy_file(&container_id, path);
+    });
+
+    // Delete the temp container
+    let _ = Command::new("docker")
         .arg("rm")
-        .arg(container_id)
+        .arg("-f")
+        .arg(&container_id)
         .output()
         .expect("failed to execute docker rm");
 
-    // Return the result of the extract operation
-    res
+    Ok(())
 }
